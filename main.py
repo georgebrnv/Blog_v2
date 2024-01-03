@@ -1,34 +1,57 @@
-from flask import Flask, render_template, redirect, url_for
-from flask_bootstrap import Bootstrap5
-from flask_sqlalchemy import SQLAlchemy
-from flask_wtf import FlaskForm
-from wtforms import StringField, SubmitField
-from wtforms.validators import DataRequired, URL
-from flask_ckeditor import CKEditor, CKEditorField
 from datetime import date
+from flask import Flask, abort, render_template, redirect, url_for, flash
+from flask_bootstrap import Bootstrap5
+from flask_ckeditor import CKEditor
+from flask_gravatar import Gravatar
+from flask_login import UserMixin, login_user, LoginManager, current_user, logout_user
+from flask_sqlalchemy import SQLAlchemy
+from functools import wraps
+from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy.orm import relationship
+# Import your forms from the forms.py
+from forms import CreatePostForm, RegisterForm, LoginForm
 
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = '8BYkEfBA6O6donzWlSihBXox7C0sKR6b'
-Bootstrap5(app)
-# CKEditor set up
-app.config['CKEDITOR_PKG_TYPE'] = 'standard-all'
 ckeditor = CKEditor(app)
+Bootstrap5(app)
+
+login_manager = LoginManager()
+login_manager.init_app(app)
 
 # CONNECT TO DB
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///posts.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///blog.db'
 db = SQLAlchemy()
 db.init_app(app)
 
 
-# CONFIGURE TABLE
-class BlogPost(db.Model):
+class User(UserMixin, db.Model):
+    __tablename__ = "users"
     id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True)
+    email = db.Column(db.String(100), unique=True)
+    password = db.Column(db.String(500))
+
+    # This will act like a List of BlogPost objects attached to each User.
+    # The "author" refers to the author property in the BlogPost class.
+    posts = relationship("BlogPost", back_populates="author")
+
+
+# CONFIGURE TABLES
+class BlogPost(db.Model):
+    __tablename__ = "blog_posts"
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Create Foreign Key, "users.id" the users refers to the tablename of User.
+    author_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    # Create reference to the User object, the "posts" refers to the posts property in the User class.
+    author = relationship("User", back_populates="posts")
+
     title = db.Column(db.String(250), unique=True, nullable=False)
     subtitle = db.Column(db.String(250), nullable=False)
     date = db.Column(db.String(250), nullable=False)
     body = db.Column(db.Text, nullable=False)
-    author = db.Column(db.String(250), nullable=False)
     img_url = db.Column(db.String(250), nullable=False)
 
 
@@ -36,13 +59,69 @@ with app.app_context():
     db.create_all()
 
 
-class AddNewPost(FlaskForm):
-    title = StringField("Blog Post Title")
-    subtitle = StringField("Subtitle")
-    author = StringField("Your name")
-    img_url = StringField("Blog Image URL")
-    body = CKEditorField("Blog Content")
-    submit = SubmitField('SUBMIT POST')
+@login_manager.user_loader
+def load_user(user_id):
+    return db.get_or_404(User, user_id)
+
+
+# Decorator allows admin access only
+def admin_only(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or current_user.id != 1:
+            return abort(403)
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    form = RegisterForm()
+    if form.validate_on_submit():
+
+        # Check if user already exists
+        if User.query.filter_by(email=form.email.data).first():
+            flash("User with this email already exists. Try Log In instead.")
+            return redirect(url_for('login'))
+
+        hashed_salted_password = generate_password_hash(
+            password=form.password.data,
+            method='pbkdf2:sha256',
+            salt_length=16
+        )
+        new_user = User(
+            username=form.username.data,
+            email=form.email.data,
+            password=hashed_salted_password,
+        )
+        db.session.add(new_user)
+        db.session.commit()
+        login_user(new_user)
+        return redirect(url_for("get_all_posts"))
+    return render_template("register.html", register_form=form)
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    form = LoginForm()
+    if form.validate_on_submit():
+        user = User.query.filter_by(email=form.email.data).first()
+        if not user:
+            flash('User with this Email does not exist. Please try again.')
+            return redirect(url_for('login'))
+        elif not check_password_hash(user.password, form.password.data):
+            flash('Password is incorrect. Please try again.')
+            return redirect(url_for('login'))
+        else:
+            login_user(user)
+            return redirect(url_for('get_all_posts'))
+    return render_template("login.html", login_form=form)
+
+
+@app.route('/logout')
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
 
 
 @app.route('/')
@@ -52,34 +131,39 @@ def get_all_posts():
     return render_template("index.html", all_posts=posts)
 
 
-@app.route('/<int:post_id>')
+# TODO: Allow logged-in users to comment on posts
+@app.route("/post/<int:post_id>")
 def show_post(post_id):
     requested_post = db.get_or_404(BlogPost, post_id)
     return render_template("post.html", post=requested_post)
 
 
-@app.route('/new-post', methods=['POST', 'GET'])
+# TODO: Use a decorator so only an admin user can create a new post
+@app.route("/new-post", methods=["GET", "POST"])
+@admin_only
 def add_new_post():
-    form = AddNewPost()
+    form = CreatePostForm()
     if form.validate_on_submit():
         new_post = BlogPost(
             title=form.title.data,
             subtitle=form.subtitle.data,
-            author=form.author.data,
-            img_url=form.img_url.data,
             body=form.body.data,
+            img_url=form.img_url.data,
+            author=current_user,
             date=date.today().strftime("%B %d, %Y")
         )
         db.session.add(new_post)
         db.session.commit()
         return redirect(url_for("get_all_posts"))
-    return render_template('make-post.html', form=form)
+    return render_template("make-post.html", form=form)
 
 
-@app.route('/edit-post/<int:post_id>', methods=['GET', 'POST'])
+# TODO: Use a decorator so only an admin user can edit a post
+@app.route("/edit-post/<int:post_id>", methods=["GET", "POST"])
+@admin_only
 def edit_post(post_id):
     post = db.get_or_404(BlogPost, post_id)
-    edit_form = AddNewPost(
+    edit_form = CreatePostForm(
         title=post.title,
         subtitle=post.subtitle,
         img_url=post.img_url,
@@ -90,17 +174,19 @@ def edit_post(post_id):
         post.title = edit_form.title.data
         post.subtitle = edit_form.subtitle.data
         post.img_url = edit_form.img_url.data
-        post.author = edit_form.author.data
+        post.author = current_user
         post.body = edit_form.body.data
         db.session.commit()
         return redirect(url_for("show_post", post_id=post.id))
-    return render_template('make-post.html', form=edit_form, is_edit=True)
+    return render_template("make-post.html", form=edit_form, is_edit=True)
 
 
-@app.route('/delete/<int:post_id>')
+# TODO: Use a decorator so only an admin user can delete a post
+@app.route("/delete/<int:post_id>")
+@admin_only
 def delete_post(post_id):
-    selected_post = db.get_or_404(BlogPost, post_id)
-    db.session.delete(selected_post)
+    post_to_delete = db.get_or_404(BlogPost, post_id)
+    db.session.delete(post_to_delete)
     db.session.commit()
     return redirect(url_for('get_all_posts'))
 
@@ -116,4 +202,4 @@ def contact():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5003)
+    app.run(debug=True)
