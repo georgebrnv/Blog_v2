@@ -1,4 +1,6 @@
 {% include "header.html" %}
+{% from "bootstrap5/form.html" import render_form %}
+
 
 <!-- Page Header-->
 <header class="masthead" style="background-image: url('{{post.img_url}}')">
@@ -25,7 +27,7 @@
     <div class="row gx-4 gx-lg-5 justify-content-center">
       <div class="col-md-10 col-lg-8 col-xl-7">
         {{ post.body|safe }}
-        {% if current_user.id == 1: %}
+        {% if current_user.id == 1 %}
         <div class="d-flex justify-content-end mb-4">
           <a
             class="btn btn-primary float-right"
@@ -34,22 +36,32 @@
           >
         </div>
         {% endif %}
+        <hr>
 
         <!-- Comments Area -->
-        <!-- TODO: Add a CKEditor for commenting below -->
-        <div class="comment">
-          <!-- TODO: Show all the comments on a post -->
-          <ul class="commentList">
-            <li>
-              <div class="commenterImage">
-                <img src="../static/assets/img/default-profile.jpg" />
-              </div>
-              <div class="commentText">
-                <p>Some comment</p>
-                <span class="date sub-text">comment author name</span>
-              </div>
-            </li>
-          </ul>
+        <div class="comments-section my-2">
+    <form method="post">
+        {{ ckeditor.config(name='comment_text') }}
+        {{ render_form(form, novalidate=True, button_map={"submit": "primary"}) }}
+    </form>
+
+    <div class="comments-list">
+        <ul>
+            {% for comment in post.comments %}
+                <li class="comment-item">
+                    <div class="commenter">
+                        <img src="{{ comment.comment_author.email | gravatar }}" alt="Gravatar Image" class="commenter-image">
+                        <span class="commenter-name">{{ comment.comment_author.username }}</span>
+                    </div>
+                    <div class="comment-content">
+                        <p>{{ comment.text|safe }}</p>
+                    </div>
+                    <a class="delete-button" href="{{url_for('delete_comment', comment_id=comment.id) }}">Delete</a>
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
         </div>
       </div>
     </div>

@@ -10,8 +10,9 @@
     <meta name="author" content="" />
     <title>Egor's Blog</title>
     {% block styles %}
-    <!-- Load Bootstrap-Flask CSS here -->
+    <!-- Load Bootstrap-Flask CSS and CKEditor here -->
     {{ bootstrap.load_css() }}
+    {{ ckeditor.load(pkg_type="") }}
     <link
       rel="icon"
       type="image/x-icon"
